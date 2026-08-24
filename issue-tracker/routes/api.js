@@ -13,10 +13,9 @@ var MongoClient = require("mongodb");
 var ObjectId = require("mongodb").ObjectID;
 const mongoose = require("mongoose");
 
-const CONNECTION_STRING = process.env.DATABASE; //MongoClient.connect(CONNECTION_STRING, function(err, db) {});
+const CONNECTION_STRING = process.env.DATABASE;
 
 module.exports = function(app) {
-  //Create Mongoose Schema
   let issueSchema = new mongoose.Schema({
     project: {
       type: String,
@@ -58,10 +57,9 @@ module.exports = function(app) {
     this.updated_on = new Date().toISOString();
     next();
   });
-  // Describe Issue from database
+
   var Issue = mongoose.model("test", issueSchema);
 
-  //Form validation
   function required(issue, requiredFields) {
     let errors = [];
 
@@ -74,21 +72,19 @@ module.exports = function(app) {
     if (errors.length) {
       return "Missing required fields: " + errors.join(", ");
     }
-    // return false
   }
+
   function populate(source, fields, obj = {}) {
     fields.forEach(field => {
-      if (source[field]) {
+      if (source[field] !== undefined) {
         obj[field] = source[field];
       }
     });
     return obj;
   }
 
-  //REQUEST
   app
     .route("/api/issues/:project")
-    //GET REQUEST
     .get(function(req, res) {
       let fields = [
         "issue_title",
@@ -101,20 +97,25 @@ module.exports = function(app) {
         "updated_on"
       ];
       let query = populate(req.query, fields);
-      let project = query(req.params.project);
+      query.project = req.params.project;
+
       if (req.query._id) {
-        query._id = ObjectId(req.query._id);
+        try {
+          query._id = ObjectId(req.query._id);
+        } catch (err) {
+          return res.status(400).send("Invalid _id");
+        }
       }
+
       Issue.find(query, (err, issues) => {
         if (err) {
-          res.status(500).json(err);
+          return res.status(500).json(err);
         }
         res.json(issues);
       });
     })
 
     .post(function(req, res) {
-      // TODO: check fields to make sure they are valid?
       req.body.project = req.params.project;
       let err = required(req.body, [
         "project",
@@ -123,9 +124,9 @@ module.exports = function(app) {
         "created_by"
       ]);
       if (err) {
-        res.status(400).send(err);
-        return;
+        return res.status(400).send(err);
       }
+
       let fields = [
         "project",
         "issue_title",
@@ -137,7 +138,7 @@ module.exports = function(app) {
       let newIssue = new Issue(populate(req.body, fields));
       newIssue.save((err, issue) => {
         if (err) {
-          res.status(500).json(err);
+          return res.status(500).json(err);
         }
         res.json(issue);
       });
@@ -147,10 +148,15 @@ module.exports = function(app) {
       let project = req.params.project;
       let _id = req.body._id;
       if (!_id) {
-        res.status(500).send("_id error");
+        return res.status(400).send("_id error");
       }
-      _id = ObjectId(_id);
-      // TODO: check how mongoose handles invalid fields
+
+      try {
+        _id = ObjectId(_id);
+      } catch (err) {
+        return res.status(400).send("_id error");
+      }
+
       let fields = [
         "issue_title",
         "issue_text",
@@ -161,38 +167,46 @@ module.exports = function(app) {
       ];
       let query = populate(req.body, fields);
       if (!Object.keys(query).length) {
-        res.status(400).send("No Updated file sent");
+        return res.status(400).send("No Updated file sent");
       }
-      Issue.findById(_id)
+
+      Issue.findOne({ _id, project })
         .then(issue => {
           if (!issue) {
-            throw "could not update" + _id;
+            throw new Error("could not update " + _id);
           }
           issue = populate(query, fields, issue);
           return issue.save();
         })
-        .then(saved => {
+        .then(() => {
           res.send("succesfully updated");
         })
         .catch(err => {
-          res.status(500).send("could not updated" + _id);
+          res.status(500).send("could not updated " + _id);
         });
     })
 
     .delete(function(req, res) {
       let project = req.params.project;
-          let _id = req.body._id
+      let _id = req.body._id;
       if (!_id) {
-           res.status(400).send('no _id')
-        return
+        return res.status(400).send("no _id");
       }
-     _id = ObjectId(_id)
-      Issue.findByIdAndRemove(_id,(err,issue)=>{
-        if(err){
-          res.status(500).send('could not delete' + _id)
-        } else {
-        res.send('deleted' +_id)
+
+      try {
+        _id = ObjectId(_id);
+      } catch (err) {
+        return res.status(400).send("invalid _id");
+      }
+
+      Issue.findOneAndDelete({ _id, project }, (err, issue) => {
+        if (err) {
+          return res.status(500).send("could not delete " + _id);
         }
-      })  
-  });
+        if (!issue) {
+          return res.status(404).send("could not delete " + _id);
+        }
+        res.send("deleted " + _id);
+      });
+    });
 };
